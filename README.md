@@ -16,8 +16,9 @@ The **GALU** token, the on-chain reward pool, and the economic model behind the 
 
 Key properties: hard cap **40M**, a per-epoch mint ceiling, cumulative claim (no double-claim), a deflationary burn, `Ownable2Step` + `Pausable` + `ReentrancyGuard`, and a minter role (operational, hot) kept separate from the owner (cold/multisig).
 
-## The economy
+## Docs
 
+- **[WHITEPAPER.md](WHITEPAPER.md)** · [polska wersja](WHITEPAPER.pl.md) — the full whitepaper: vision, network, architecture, anti-sybil, economy, tokenomics, security, roadmap.
 - **[HOW_IT_WORKS.md](HOW_IT_WORKS.md)** — a plain-language walk-through, from a sensor reading to a wallet withdrawal.
 - **[EMISSION_MODEL.md](EMISSION_MODEL.md)** — the formal emission policy (the contract and backend must match it).
 
