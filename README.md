@@ -4,7 +4,7 @@
 
 The **GALU** token, the on-chain reward pool, and the economic model behind the **Sensmos** DePIN sensor network.
 
-> Sensmos is a decentralized network of cheap ESP32 sensor nodes that measure the real world, publish to a live map, trade data peer-to-peer, and earn GALU for real contribution. This repository is the public, on-chain part: the token/reward contract and how emission works.
+> Sensmos is a decentralized network of cheap ESP32 sensor nodes that measure the real world, publish to a live map, trade data peer-to-peer, and earn GALU for real contribution. The same nodes form a measurement mesh (ICMP/TCP/DNS/HTTP probes across countries) — a live picture of internet health seen from real homes, not datacenters. This repository is the public, on-chain part: the token/reward contract and how emission works.
 
 ## The contract
 

@@ -11,7 +11,7 @@
 
 ## Abstract
 
-Big companies measure highways and city centres. Almost nobody measures *your* street — its power quality, its connectivity, its air. Sensmos turns a cheap ESP32 into a sensor node that measures the real world locally, publishes it to a shared live map, can trade data peer-to-peer, and earns **GALU** for genuine, attested contribution. There is no cloud dependency for the device, identity is generated on-chip, and the reward economy is *physically backed* on-chain: every unit of reward is covered by tokens actually held in the contract — there is no virtual reserve. This paper describes the network, its architecture, its anti-sybil model, and the GALU emission economy exactly as deployed.
+Big companies measure highways and city centres. Almost nobody measures *your* street — its power quality, its connectivity, its air. Sensmos turns a cheap ESP32 into a sensor node that measures the real world locally, publishes it to a shared live map, can trade data peer-to-peer, and earns **GALU** for genuine, attested contribution. The same nodes also form a measurement mesh: they probe each other and public services across countries (ICMP, TCP, DNS, HTTP), producing a live picture of internet health as seen **from real homes, not datacenters** — a second, network-intelligence plane of the same fabric. There is no cloud dependency for the device, identity is generated on-chip, and the reward economy is *physically backed* on-chain: every unit of reward is covered by tokens actually held in the contract — there is no virtual reserve. This paper describes the network, its architecture, its anti-sybil model, and the GALU emission economy exactly as deployed.
 
 ---
 
@@ -40,7 +40,10 @@ A node publishes readings as **entities**, grouped by an `entity_id` prefix:
 | `tmp.*` | scratch buffer for on-device scripts | no | no |
 
 ### The live map
-Every public reading feeds a live map, an events feed and a value heatmap. Each node is rendered with a **coverage** area whose radius adapts to local density and to the global scale of the network: a lone node in an unserved region covers a wide area; a dense urban cluster shrinks to tight, non-overlapping circles.
+Every public reading feeds a live map, an events feed and a value heatmap. Each node is rendered with a **coverage** area whose radius is purely density-driven: a node claims a tighter radius only if enough real neighbours surround it (the neighbour target grows as the radius shrinks), so a lone node in an unserved region covers a wide area while a dense cluster collapses to tight circles.
+
+### The network plane (checknet)
+Besides sensing, every node participates in a **measurement mesh**: it pings peer nodes in other countries and a set of public/anycast targets (ICMP), and runs lightweight **TCP connect**, **DNS resolve + integrity** and **HTTP status/TTFB** probes. The backend aggregates results into country↔country latency bands rendered live on the map, plus per-node network scores (ping, jitter, loss, reach). Because probes originate from real household connections rather than datacenters, the resulting picture of latency, reachability and DNS integrity reflects the internet **as people actually experience it** — a vantage point commercial monitoring networks cannot buy. Directed monitoring (watching *your own* endpoint from many countries at once) is built on this same plane — see roadmap (§9).
 
 ### Peer-to-peer data market
 A node can **subscribe** to another node's readings (`sub.*`), billed daily in GALU, with a private prefix the backend never learns. This is the demand side of the economy: data that has value to someone flows directly between devices.
@@ -68,10 +71,11 @@ ESP32 node ──signed batch──▶ Backend ──▶ PostgreSQL
 ## 4. Identity, trust & anti-sybil
 
 - **On-device identity.** Each node generates a `secp256k1` keypair locally and **signs every data batch**. The private key never ships in the firmware image and never leaves the chip.
-- **App-proof geolocation.** A node's position is set only from the companion app's phone GPS (the proof anchor), optionally fuzzed 200–800 m for privacy; the human-readable city is computed server-side. Position cannot be typed in by hand — this ties a location claim to a physical phone present at the node.
+- **App-proof geolocation.** A node's position is set only from the companion app's phone GPS captured **inside the attestation ceremony** (the proof anchor), optionally fuzzed 200–800 m for privacy; the human-readable city is computed server-side. The claimed position is additionally **cross-checked against the node's network egress** (geo-IP country and distance) — a GPS reading inconsistent with where the node actually connects from is rejected. Position cannot be typed in by hand.
 - **Device attestation.** A timed Bluetooth ceremony with a dual signature proves `1 device_id = 1 physical node`, defeating simulator farms. **Only attested ("trusted") nodes count toward emission.**
+- **Shared-uplink cap.** Reward weight includes a factor keyed to the node's **public egress IP**: two nodes behind one uplink keep ~0.95 each, and the factor decays gently as more nodes share the same IP. Crucially it keys on hard network facts, **not on the wallet** — registering new wallets does not reset it. Combined with geographic scarcity (§5) this makes co-located node farming unprofitable while leaving genuine multi-node homes essentially untouched.
 
-Together these make spoofing expensive: to fake rewards you would need real hardware, a real key, a real phone at a real location, passing a real-time challenge.
+Together these make spoofing expensive: to fake rewards you would need real hardware, a real key, a real phone at a real location, passing a real-time challenge — and each additional co-located device earns visibly less.
 
 ---
 
@@ -84,7 +88,7 @@ Together these make spoofing expensive: to fake rewards you would need real hard
 For every trusted, active node with at least `MIN_PINGS` pings:
 
 ```
-weight     = scarcity × categories × uptime × activity        (max ≈ 2.14×)
+weight     = scarcity × categories × uptime × activity × uplink
 per_node   = BASE                       if trusted ≤ THRESHOLD
            = BASE × THRESHOLD / trusted  if trusted > THRESHOLD   (decay)
 fresh_mint = min(trusted × per_node, MAX_EPOCH_MINT, cap_left)    ← always full to the cap
@@ -97,6 +101,16 @@ reward_i   = (pool − team) × weight_i / Σweights                 ← a share
 ```
 
 A node's reward is a **share of the pool by weight** — a better-placed, higher-uptime node takes a bigger slice at the expense of weaker ones, not by printing new tokens.
+
+The weight factors, exactly as deployed:
+
+- **scarcity** is *geographic*: the backend counts other active nodes within the node's adaptive coverage radius and the multiplier falls **linearly from 1.5 (alone in the region) to a floor of 0.8** in dense areas. Note it drops *below* 1.0 — redundant coverage is actively penalized, not merely un-bonused. Being where nobody else measures is the single strongest lever.
+- **categories** — +10% per real sensing category (power / environment / home), capped at 1.3×. Built-in network telemetry does not count.
+- **uptime** — the fraction of expected pings delivered.
+- **activity** — +2% per live entity, capped at 1.1×.
+- **uplink** — the shared-IP factor (§4): 1.0 for a sole node on its connection, gently decaying when several nodes share one egress IP.
+
+Maximum ≈ 2.14× (full uptime, sole node on its uplink); a node stacked in a crowded spot on a shared link can fall well below 1×.
 
 ### Three inflows, one outflow
 | Source | What it is | Inflationary? |
@@ -163,6 +177,7 @@ Backend-config values are tunable live and can taper over time (the nominal amou
 - **Power quality** — grid voltage and stability; catch sags, spikes and outages on your street.
 - **Coverage & signal** — a real map of WiFi/radio strength where people actually live.
 - **Climate & environment** — temperature, humidity, pressure, air quality from any sensor.
+- **Internet health** — the node mesh measures cross-country latency, DNS integrity and service reachability from real household connections; the same plane doubles as a home uptime monitor for your own servers.
 - **Edge automation** — local `if → action` rules, webhooks, push, and a first-class Home Assistant / ESPHome bridge.
 - **Peer data** — subscribe to a neighbour's readings, or sell yours into the network.
 
@@ -170,10 +185,11 @@ Backend-config values are tunable live and can taper over time (the nominal amou
 
 ## 9. Roadmap
 
-1. **Live (now).** Contract deployed on Polygon; daily epochs minting and publishing cumulative roots; firmware, app, HA integration and protocol docs open-source.
+1. **Live (now).** Contract deployed and verified on Polygon; daily epochs minting and publishing cumulative roots; firmware, app, HA integration and protocol docs open-source. The ambient network mesh (node↔node ICMP + TCP/DNS/HTTP probes) runs fleet-wide and feeds the live map.
 2. **Growth.** Onboard real nodes, harden the demand side (data marketplace / external revenue → `fundPool`), polish the consumer experience.
-3. **Trust hardening.** Owner → multisig + timelock, external audit, Polygonscan verification, public reward datasets + monitoring.
-4. **Verifiability.** Move the reward oracle from "trusted" toward "challengeable / provable" as total value justifies the engineering.
+3. **Network intelligence.** Turn the measurement mesh into a product: **directed monitoring** — watch *your own* endpoint from many countries at once (uptime, TTFB, DNS answers, alerting), plus a public **Internet Radar** and dataset API. Opening this to outside customers is hard-gated behind two safeguards: cryptographically **signed probe jobs** (nodes only execute what the backend signed) and **target-ownership verification** — the network will only ever probe what a customer proves they control.
+4. **Trust hardening.** Owner → multisig + timelock, external audit, public reward datasets + monitoring.
+5. **Verifiability.** Move the reward oracle from "trusted" toward "challengeable / provable" as total value justifies the engineering.
 
 ---
 

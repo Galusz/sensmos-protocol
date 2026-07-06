@@ -21,8 +21,10 @@ max **96/day**. pings/96 = **uptime**. A node needs **≥ 24 pings** to count to
 
 Only **trusted** nodes (after the BLE attestation — anti-sybil) with ≥ 24 pings.
 ```
-weight = scarcity × categories × uptime × activity      (max ≈ 2.14×)
+weight = scarcity × categories × uptime × activity × uplink   (max ≈ 2.14×)
 ```
+- **scarcity** — geographic, linear **1.5 → 0.8**: alone in the region = 1.5, dense area = below 1.0 (penalty).
+- **uplink** — shared-IP factor: 2 nodes on one connection ≈ 0.95 each, decaying gently with more; keyed to the egress IP, not the wallet.
 
 ## 3. The pool forms — mint (always) + bonus (5% of the reserve)
 
