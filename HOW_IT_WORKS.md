@@ -23,7 +23,7 @@ Only **trusted** nodes (after the BLE attestation — anti-sybil) with ≥ 24 pi
 ```
 weight = scarcity × categories × uptime × activity × uplink   (max ≈ 2.14×)
 ```
-- **scarcity** — geographic, linear **1.5 → 0.8**: alone in the region = 1.5, dense area = below 1.0 (penalty).
+- **scarcity** — geographic, from the coverage-radius ladder: **200 km → 1.5× … 1 km → 0.8×** (neighbours shrink the radius; the rung sets the multiplier; dense areas land below 1.0 = penalty).
 - **uplink** — shared-IP factor: 2 nodes on one connection ≈ 0.95 each, decaying gently with more; keyed to the egress IP, not the wallet.
 
 ## 3. The pool forms — mint (always) + bonus (5% of the reserve)

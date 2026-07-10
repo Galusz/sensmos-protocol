@@ -78,7 +78,7 @@ totalEntitlement = Σ all lifetimes                  # → guard in the contract
 ```
 
 Weight: `scarcity × categories × uptime × activity × uplink` (max ≈ 2.14× at full uptime).
-Scarcity is geographic — linear from 1.5 (alone in the region) down to a **0.8 floor** in dense areas (redundant coverage is penalized, not just un-bonused). Uplink is a shared-IP factor: ~0.95 each for 2 nodes behind one egress IP, gently decaying with more — keyed to hard network facts, not the wallet, so new wallets don't reset it.
+Scarcity is geographic and follows the coverage-radius ladder: neighbours shrink the radius (200 km rung allows ≤2, each tighter rung allows one more), and the multiplier derives from the rung — **200 km → 1.5×, 150 → 1.4×, … 10 → 1.0×, … 1 km → 0.8× (floor)**. Density is priced exactly once; redundant coverage still lands below 1.0 (penalized, not just un-bonused). Uplink is a shared-IP factor: ~0.95 each for 2 nodes behind one egress IP, gently decaying with more — keyed to hard network facts, not the wallet, so new wallets don't reset it.
 
 ## 5. On-chain mint — catch-up + mint breaker
 
