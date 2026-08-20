@@ -22,7 +22,7 @@ Environmental, grid and connectivity data is concentrated in the hands of a few 
 Sensmos addresses three gaps at once:
 
 1. **A fabric** — a live, public map where every node's public readings become a shared picture of an area.
-2. **An incentive** — a token that rewards uptime and *scarcity of coverage* (measuring where nobody else does), not speculation.
+2. **An incentive** — a token that rewards uptime and *coverage rarity* (measuring where nobody else does), not speculation.
 3. **Proof of physicality** — a device-attestation ceremony so that one reward identity equals one real node, not a simulator farm.
 
 ---
@@ -53,7 +53,7 @@ A node can **subscribe** to another node's readings (`sub.*`), billed daily in G
 ## 3. Architecture
 
 ```
-ESP32 node ──signed batch──▶ Backend ──▶ PostgreSQL
+ESP32 node ──enc batch──────▶ Backend ──▶ PostgreSQL
    ▲  │ (local HTTP API,                    │
    │  │  BLE provisioning)        ┌─────────┴─────────┐
    │  ▼                           ▼                   ▼
@@ -62,7 +62,7 @@ ESP32 node ──signed batch──▶ Backend ──▶ PostgreSQL
 ```
 
 - **Firmware (Arduino-ESP32).** Reads sensors, runs an **edge script engine** — up to four-step rules (`if → action`: webhook, push, web-fetch, ping/monitor, message to another node) that execute locally with no cloud. Exposes a local HTTP API on the LAN.
-- **Backend (Node.js · PostgreSQL · ethers v6).** Ingests signed batches over WebSocket, runs the daily *epoch* (scoring + reward pool + Merkle), serves the map/leaderboard/stats, and submits roots on-chain.
+- **Backend (Node.js · PostgreSQL · ethers v6).** Ingests batches over an encrypted, authenticated WebSocket, runs the daily *epoch* (scoring + reward pool + Merkle), serves the map/leaderboard/stats, and submits roots on-chain.
 - **Mobile app (Flutter).** Self-custody wallet, BLE node onboarding, the live map, claim/deposit.
 - **Home Assistant integration (HACS).** Brings node data into HA and feeds HA data back to the node — fully local, no broker.
 
@@ -70,11 +70,11 @@ ESP32 node ──signed batch──▶ Backend ──▶ PostgreSQL
 
 ## 4. Identity, trust & anti-sybil
 
-- **On-device identity.** Each node generates a `secp256k1` keypair locally and **signs every data batch**. The private key never ships in the firmware image and never leaves the chip.
+- **On-device identity.** Each node generates a `secp256k1` keypair locally and uses it to **authenticate its WebSocket session** (a signed identify handshake that derives the encrypted channel); every data batch then travels over that encrypted, authenticated channel. The private key never ships in the firmware image and never leaves the chip.
 - **App-proof geolocation.** A node's position is set only from the companion app's phone GPS captured **inside the attestation ceremony** (the proof anchor), optionally fuzzed 200–800 m for privacy; the human-readable city is computed server-side. The claimed position is additionally **cross-checked against the node's network egress** (geo-IP country and distance) — a GPS reading inconsistent with where the node actually connects from is rejected. Position cannot be typed in by hand.
 - **Device attestation.** A timed Bluetooth ceremony with a dual signature proves `1 device_id = 1 physical node`, defeating simulator farms. **Only attested ("trusted") nodes count toward emission.**
-- **Signed control plane.** Backend→node commands (reboot, delete, update) are signed with the network key over a single-use nonce, and firmware updates are delivered over signed OTA: the node verifies the SHA-256 and signature before flashing, and a failed update rolls back to the previous image automatically.
-- **Shared-uplink cap.** Reward weight includes a factor keyed to the node's **public egress IP**: two nodes behind one uplink keep ~0.95 each, and the factor decays gently as more nodes share the same IP. Crucially it keys on hard network facts, **not on the wallet** — registering new wallets does not reset it. Combined with geographic scarcity (§5) this makes co-located node farming unprofitable while leaving genuine multi-node homes essentially untouched.
+- **Authenticated control plane.** Backend→node commands (reboot, delete, update) travel only over an encrypted, authenticated WebSocket channel — an ECDH-derived AES-GCM session with a per-message sequence counter for replay protection; the node rejects anything from outside it. Firmware updates verify the image's SHA-256 checksum before flashing, and a failed update rolls back to the previous image automatically. (A firmware-pinned signature over the image, independent of the backend-supplied hash, is a planned hardening step — see §7.)
+- **Shared-uplink cap.** Reward weight includes a factor keyed to the node's **public egress IP**: two nodes behind one uplink keep ~0.95 each, and the factor decays gently as more nodes share the same IP. Crucially it keys on hard network facts, **not on the wallet** — registering new wallets does not reset it. Combined with geographic coverage rarity (§5) this makes co-located node farming unprofitable while leaving genuine multi-node homes essentially untouched.
 
 Together these make spoofing expensive: to fake rewards you would need real hardware, a real key, a real phone at a real location, passing a real-time challenge — and each additional co-located device earns visibly less.
 
@@ -89,7 +89,7 @@ Together these make spoofing expensive: to fake rewards you would need real hard
 For every trusted, active node with at least `MIN_PINGS` pings:
 
 ```
-weight     = scarcity × categories × uptime × activity × uplink
+weight     = coverage × categories × uptime × activity × uplink
 per_node   = BASE                       if trusted ≤ THRESHOLD
            = BASE × THRESHOLD / trusted  if trusted > THRESHOLD   (decay)
 fresh_mint = min(trusted × per_node, MAX_EPOCH_MINT, cap_left)    ← always full to the cap
@@ -105,13 +105,13 @@ A node's reward is a **share of the pool by weight** — a better-placed, higher
 
 The weight factors, exactly as deployed:
 
-- **scarcity** is *geographic* and derives directly from the coverage-radius ladder. The radius algorithm walks down from 200 km, counting live neighbours at each rung (the allowed count grows as the radius shrinks: ≤2 at 200 km, ≤3 at 150 km, …) and stops at the widest rung that fits; the multiplier then follows the rung: **200 km → 1.5×, 150 → 1.4×, 100 → 1.3×, 50 → 1.2×, 20 → 1.1×, 10 → 1.0×, 5 → 0.9×, 2/1 km → 0.8× (floor)**. Density is thus priced exactly once — neighbours shrink the radius, and the radius sets the multiplier. Note it drops *below* 1.0 — redundant coverage is actively penalized, not merely un-bonused. Being where nobody else measures is the single strongest lever.
-- **categories** — +10% per real sensing category (power / environment / home), capped at 1.3×. Built-in network telemetry does not count.
+- **coverage** is *geographic* and derives directly from the coverage-radius ladder. The radius algorithm walks down from 200 km, counting live neighbours at each rung (the allowed count grows as the radius shrinks: ≤2 at 200 km, ≤3 at 150 km, …) and stops at the widest rung that fits; the multiplier then follows the rung: **200 km → 1.5×, 150 → 1.4×, 100 → 1.3×, 50 → 1.2×, 20 → 1.1×, 10 → 1.0×, 5 → 0.9×, 2/1 km → 0.8× (floor)**. Density is thus priced exactly once — neighbours shrink the radius, and the radius sets the multiplier. Note it drops *below* 1.0 — redundant coverage is actively penalized, not merely un-bonused. Being where nobody else measures is the single strongest lever.
+- **categories** — +10% per real sensing category (power / environment / home / RF), capped at 1.4×. Built-in network telemetry does not count.
 - **uptime** — the fraction of expected pings delivered.
-- **activity** — +2% per live entity, capped at 1.1×.
+- **activity** — +1% per live entity, capped at 1.1×.
 - **uplink** — the shared-IP factor (§4): 1.0 for a sole node on its connection, gently decaying when several nodes share one egress IP.
 
-Maximum ≈ 2.14× (full uptime, sole node on its uplink); a node stacked in a crowded spot on a shared link can fall well below 1×.
+Maximum ≈ 2.31× (full uptime, sole node on its uplink); a node stacked in a crowded spot on a shared link can fall well below 1×.
 
 ### Three inflows, one outflow
 | Source | What it is | Inflationary? |
@@ -188,7 +188,7 @@ Backend-config values are tunable live and can taper over time (the nominal amou
 
 1. **Live (now).** Contract deployed and verified on Polygon; daily epochs minting and publishing cumulative roots; firmware, app, HA integration and protocol docs open-source. The ambient network mesh (node↔node ICMP + TCP/DNS/HTTP probes) runs fleet-wide and feeds the live map.
 2. **Growth.** Onboard real nodes, harden the demand side (data marketplace / external revenue → `fundPool`), polish the consumer experience.
-3. **Network intelligence (in development — "Sensmos Watch").** Turn the measurement mesh into a product: **directed monitoring** — watch *your own* endpoint from many countries at once (uptime, TTFB, DNS answers, alerting via push/webhook/e-mail, public status pages). The directed-monitoring engine (region-targeted assignments, redundancy quorum, per-country rollups, alerts) already runs in production; the product wrapper is being built. Client revenue funds the pool through the `fundPool` buyback path (§5) and is distributed to **all** nodes through the standard epoch weights — vantage rarity is already priced by the scarcity ladder, so there are no per-probe payouts to game. Opening this to outside customers is hard-gated behind two safeguards: cryptographically **signed probe jobs** (nodes only execute what the backend signed) and **target-ownership verification** — the network will only ever probe what a customer proves they control.
+3. **Network intelligence.** Turn the measurement mesh into **directed monitoring** — watch *your own* endpoint from many countries at once (uptime, TTFB, DNS answers, alerting via push/webhook/e-mail, public status pages). The directed-monitoring engine (region-targeted assignments, redundancy quorum, per-country rollups, alerts) already runs in production. Client revenue funds the pool through the `fundPool` buyback path (§5) and is distributed to **all** nodes through the standard epoch weights — vantage rarity is already priced by the coverage ladder, so there are no per-probe payouts to game. Opening this to outside customers is hard-gated behind two safeguards: cryptographically **signed probe jobs** (nodes only execute what the backend signed) and **target-ownership verification** — the network will only ever probe what a customer proves they control.
 4. **Trust hardening.** Owner → multisig + timelock, external audit, public reward datasets + monitoring.
 5. **Verifiability.** Move the reward oracle from "trusted" toward "challengeable / provable" as total value justifies the engineering.
 
